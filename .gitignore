@@ -1,0 +1,35 @@
+# ▸ 模型文件
+models/
+*.gguf
+
+# ▸ Xcode
+*.xcuserdata
+*.xcworkspace/xcuserdata
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ▸ Swift / SPM
+.build/
+.swiftpm/
+
+# ▸ llama.cpp 编译产物
+llama.cpp/build/
+llama.cpp/**/*.o
+llama.cpp/**/*.d
+*.make
+
+# ▸ macOS
+.DS_Store
+Thumbs.db
+
+# ▸ 通用
+.env
+*.log
+node_modules/
+
+# ▸ WorkBuddy 内部数据
+.workbuddy/
+
