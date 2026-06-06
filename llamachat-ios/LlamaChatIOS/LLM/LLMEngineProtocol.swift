@@ -1,5 +1,4 @@
 import Foundation
-import Combine
 
 // MARK: - 引擎类型
 
@@ -12,10 +11,17 @@ enum EngineType: String, CaseIterable, Identifiable {
 // MARK: - 统一协议
 
 /// 两个引擎都实现这个协议，ViewModel 通过 `any LLMEngine` 调用，无需关心后端。
+///
+/// 标注 @MainActor：LlamaEngine 通过 @Observable 隐式在主 actor；
+/// AppleFoundationEngine 也显式标注 @MainActor，保持一致性。
+@MainActor
 protocol LLMEngine: AnyObject {
     var isLoaded: Bool { get }
     var isAvailable: Bool { get async }
-    /// 加载模型／会话。llama.cpp 需在调用前通过 `modelPath` 设置路径。
+    /// 引擎是否需要 ViewModel 拼接 ChatTemplate 格式的完整 prompt。
+    /// llama.cpp 需要（模型只接受裸 token），Apple AI 不需要（系统指令在 session 初始化时注入）。
+    var needsFormattedPrompt: Bool { get }
+    /// 加载模型／会话。llama.cpp 需在调用前通过 `pendingModelPath` 设置路径。
     func load() async throws
     func unload()
     func generate(prompt: String) -> AsyncThrowingStream<String, Error>
@@ -31,9 +37,15 @@ protocol LLMEngine: AnyObject {
 /// （需要 Xcode 17+ / iOS 26 SDK）。否则 isAvailable 始终为 false，load() 会抛出
 /// unavailable 错误。ViewModel 应检查 engine.isAvailable 后再使用。
 func makeEngine(preferApple: Bool = true) -> (any LLMEngine, EngineType) {
+#if canImport(FoundationModels)
+    if #available(iOS 26.0, *), preferApple {
+        return (AppleFoundationEngine(), .appleFoundation)
+    }
+#else
     if #available(iOS 18.1, *), preferApple {
         return (AppleFoundationEngine(), .appleFoundation)
     }
+#endif
     return (LlamaEngine(), .llamaCpp)
 }
 
@@ -57,47 +69,68 @@ func makeEngine(preferApple: Bool = true) -> (any LLMEngine, EngineType) {
 import FoundationModels
 
 @available(iOS 26.0, *)
+@MainActor
 final class AppleFoundationEngine: LLMEngine {
 
     private var _session: LanguageModelSession?
-    private var shouldStop = false
+    private var generationTask: Task<Void, Never>?
 
     var isLoaded: Bool { _session != nil }
 
+    /// Apple AI 系统指令在 session 初始化时注入，不需要 ViewModel 拼接 ChatTemplate
+    var needsFormattedPrompt: Bool { false }
+
     var isAvailable: Bool {
-        get async { await SystemLanguageModel.default.availability == .available }
+        get async {
+            await SystemLanguageModel.default.availability == .available
+        }
     }
 
     func load() async throws {
-        shouldStop = false
-        _session = LanguageModelSession()
+        guard await isAvailable else {
+            throw LLMEngineError.unavailable
+        }
+        generationTask?.cancel()
+        generationTask = nil
+        _session = LanguageModelSession(
+            model: .default,
+            instructions: Instructions(ModelCatalog.systemPrompt)
+        )
     }
 
     func unload() {
+        generationTask?.cancel()
+        generationTask = nil
         _session = nil
-        shouldStop = false
     }
 
     func generate(prompt: String) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            guard let session = self._session else {
+        guard let session = _session else {
+            return AsyncThrowingStream<String, Error> { continuation in
                 continuation.finish(throwing: LLMEngineError.unavailable)
-                return
             }
-            Task {
+        }
+        let responseStream = session.streamResponse(to: Prompt(prompt))
+        return AsyncThrowingStream<String, Error> { continuation in
+            let task = Task {
                 do {
-                    let response = try await session.respond(to: prompt)
-                    continuation.yield(response.content)
+                    for try await snapshot in responseStream {
+                        continuation.yield(snapshot.content)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
             }
+            self.generationTask = task
         }
     }
 
     func stopGeneration() {
-        shouldStop = true
+        generationTask?.cancel()
+        generationTask = nil
     }
 }
 
@@ -108,6 +141,7 @@ final class AppleFoundationEngine: LLMEngine {
 final class AppleFoundationEngine: LLMEngine {
 
     var isLoaded: Bool { false }
+    var needsFormattedPrompt: Bool { false }
 
     var isAvailable: Bool {
         get async { false }
@@ -136,9 +170,11 @@ final class AppleFoundationEngine: LLMEngine {
 
 extension LlamaEngine: LLMEngine {
 
+    /// llama.cpp 需要完整的 ChatTemplate prompt，不能只传裸文本
+    var needsFormattedPrompt: Bool { true }
+
     /// 为遵从协议，新增 `load() async throws`，内部调用已有 `load(path:)`.
     /// ViewModel 需要在调用前设置 `pendingModelPath`（指向当前选中模型）。
-    @MainActor
     func load() async throws {
         guard let path = pendingModelPath else {
             throw LLMEngineError.modelNotFound
@@ -147,8 +183,6 @@ extension LlamaEngine: LLMEngine {
     }
 
     /// 协议要求的单参数版本，委托给已有的双参数 generate
-    /// 注：@MainActor 警告在 Swift 5 模式无害，升级 Swift 6 时需调整协议本身
-    @MainActor
     func generate(prompt: String) -> AsyncThrowingStream<String, Error> {
         generate(prompt: prompt, params: GenerateParams())
     }

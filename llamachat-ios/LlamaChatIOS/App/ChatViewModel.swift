@@ -41,10 +41,19 @@ final class ChatViewModel {
     var statusText: String {
         if isGenerating { return "生成中..." }
         if engine.isLoaded {
+            if selectedEngine == .appleFoundation {
+                return "Apple 端智能 · 就绪"
+            }
             if let m = model.selectedModel {
                 return "\(m.name) · 就绪"
             }
             return "\(selectedEngine.rawValue) · 就绪"
+        }
+        if selectedEngine == .appleFoundation {
+            if let err = lastLoadError, !engine.isLoaded {
+                return "Apple AI 失败: \(err)"
+            }
+            return "Apple AI 加载中..."
         }
         if selectedEngine == .llamaCpp {
             if model.isDownloading {
@@ -148,8 +157,16 @@ final class ChatViewModel {
         isGenerating = true
         streamingText = ""
 
-        let prompt = buildPrompt(messages: messages)
-        print("[ChatViewModel] send() 构建 prompt (\(prompt.count) chars), 模板=\(model.chatTemplate.rawValue)")
+        // Apple AI: 系统指令在 session init 时注入，仅传用户裸文本
+        // llama.cpp: 需要全量 ChatTemplate prompt（含 system + 历史对话）
+        let prompt: String
+        if engine.needsFormattedPrompt {
+            prompt = buildPrompt(messages: messages)
+            print("[ChatViewModel] send() llama.cpp prompt (\(prompt.count) chars), 模板=\(model.chatTemplate.rawValue)")
+        } else {
+            prompt = text
+            print("[ChatViewModel] send() Apple AI prompt: \"\(text.prefix(80))\"")
+        }
 
         Task {
             do {

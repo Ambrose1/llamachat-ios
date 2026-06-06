@@ -15,11 +15,8 @@ DerivedData/
 .build/
 .swiftpm/
 
-# ▸ llama.cpp 编译产物
-llama.cpp/build/
-llama.cpp/**/*.o
-llama.cpp/**/*.d
-*.make
+# ▸ llama.cpp（xcframework 已含预编译产物，源码作参考）
+llama.cpp/
 
 # ▸ macOS
 .DS_Store
@@ -32,4 +29,7 @@ node_modules/
 
 # ▸ WorkBuddy 内部数据
 .workbuddy/
+
+# ▸ Xcode 构建缓存（自定义 derivedData）
+.xcode-build/
 

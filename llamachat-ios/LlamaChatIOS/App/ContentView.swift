@@ -97,6 +97,16 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                 }
+
+                if !viewModel.engine.isLoaded,
+                   viewModel.selectedEngine == .appleFoundation {
+                    Button("加载") {
+                        Task { await viewModel.switchEngine(to: .appleFoundation) }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
             }
         }
     }
@@ -168,17 +178,50 @@ struct ContentView: View {
                     }
                 }
             } else {
-                Image(systemName: "apple.logo")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.secondary)
+                Group {
+                    if viewModel.engine.isLoaded {
+                        Image(systemName: "apple.logo")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.green)
 
-                Text("Apple AI 不可用")
-                    .font(.headline)
+                        Text("Apple 端智能已就绪")
+                            .font(.headline)
 
-                Text("需要 Xcode 17+ / iOS 26 SDK\n当前 SDK 不含 FoundationModels 框架")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                        Text("本地运行，完全隐私 · 无需下载模型")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if viewModel.lastLoadError != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.red)
+
+                        Text("Apple AI 加载失败")
+                            .font(.headline)
+
+                        if let err = viewModel.lastLoadError {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Button("重试") {
+                            Task { await viewModel.switchEngine(to: .appleFoundation) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    } else {
+                        ProgressView()
+                            .scaleEffect(1.5)
+
+                        Text("正在初始化 Apple 端智能...")
+                            .font(.headline)
+                            .padding(.top, 4)
+
+                        Text("首次加载可能需要几秒钟")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .padding(.top, 40)
